@@ -1,1 +1,1 @@
-# 
+#   helper operators use to send reports, so they don’t need to know broker internals
