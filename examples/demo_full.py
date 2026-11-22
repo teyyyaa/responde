@@ -9,12 +9,12 @@ Try the offline scenario: click "Go Offline" on the Ambulance dashboard, send a
 MEDICAL report from the 911 Operator, then click "Reconnect". The operator sees
 the Ambulance go from "queued" to "Acknowledged".
 
-Uses the mock broker until broker/broker.py is ready; swap the import below.
+Uses the persistent real broker.
 """
 
 import customtkinter as ctk
 
-from clients.mock_broker import MockBroker
+from broker.broker import Broker
 from ui import (
     ambulance_dashboard,
     barangay_dashboard,
@@ -25,7 +25,7 @@ from ui import (
 
 
 def main():
-    broker = MockBroker()
+    broker = Broker()
     root = ctk.CTk()
     root.withdraw()
 
