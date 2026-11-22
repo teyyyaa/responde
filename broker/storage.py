@@ -52,6 +52,14 @@ class StorageManager:
 
                 CREATE INDEX IF NOT EXISTS idx_delivery_sub_status
                     ON delivery_queue (subscriber_id, status, queue_id);
+
+                CREATE TABLE IF NOT EXISTS response_status (
+                    subscriber_id TEXT NOT NULL REFERENCES subscribers(subscriber_id) ON DELETE CASCADE,
+                    report_id INTEGER NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+                    status TEXT NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                    PRIMARY KEY (subscriber_id, report_id)
+                );
                 """
             )
 
@@ -183,3 +191,92 @@ class StorageManager:
                 (next_status, next_attempts, reason, queue_id),
             )
             return next_status
+
+    def ack_by_report(self, subscriber_id: str, report_uid: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT dq.queue_id
+                FROM delivery_queue dq
+                JOIN reports r ON r.id = dq.report_id
+                WHERE dq.subscriber_id = ? AND r.report_uid = ?;
+                """,
+                (subscriber_id, report_uid),
+            ).fetchone()
+            if row is None:
+                return False
+            queue_id = int(row["queue_id"])
+        self.ack_delivery(queue_id)
+        return True
+
+    def nack_by_report(self, subscriber_id: str, report_uid: str, reason: str = "Delivery failed") -> str:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT dq.queue_id
+                FROM delivery_queue dq
+                JOIN reports r ON r.id = dq.report_id
+                WHERE dq.subscriber_id = ? AND r.report_uid = ?;
+                """,
+                (subscriber_id, report_uid),
+            ).fetchone()
+            if row is None:
+                return "NOT_FOUND"
+            queue_id = int(row["queue_id"])
+        return self.nack_delivery(queue_id, reason)
+
+    def update_status(self, subscriber_id: str, report_uid: str, status: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id FROM reports WHERE report_uid = ?;", (report_uid,)
+            ).fetchone()
+            if row is None:
+                return False
+            conn.execute(
+                """
+                INSERT INTO response_status (subscriber_id, report_id, status)
+                VALUES (?, ?, ?)
+                ON CONFLICT(subscriber_id, report_id) DO UPDATE SET
+                    status = excluded.status,
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now');
+                """,
+                (subscriber_id, int(row["id"]), status),
+            )
+            return True
+
+    def get_reports(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT r.report_uid, r.category, r.payload_json, r.created_at,
+                       dq.subscriber_id, dq.status, dq.attempts,
+                       rs.status AS response_status
+                FROM reports r
+                LEFT JOIN delivery_queue dq ON dq.report_id = r.id
+                LEFT JOIN response_status rs
+                  ON rs.report_id = r.id AND rs.subscriber_id = dq.subscriber_id
+                ORDER BY r.id ASC, dq.queue_id ASC;
+                """
+            ).fetchall()
+            reports: dict[str, dict[str, Any]] = {}
+            for row in rows:
+                report = reports.setdefault(
+                    row["report_uid"],
+                    {
+                        "report_uid": row["report_uid"],
+                        "category": row["category"],
+                        "payload": json.loads(row["payload_json"]),
+                        "created_at": row["created_at"],
+                        "deliveries": [],
+                    },
+                )
+                if row["subscriber_id"]:
+                    report["deliveries"].append(
+                        {
+                            "subscriber_id": row["subscriber_id"],
+                            "status": row["status"],
+                            "attempts": row["attempts"],
+                            "response_status": row["response_status"],
+                        }
+                    )
+            return list(reports.values())
