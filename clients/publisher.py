@@ -71,6 +71,33 @@ class Publisher:
         self.history: list[SentReport] = []      # newest last
         self._by_id: dict[str, SentReport] = {}
         self._log_pos = 0
+        self._restore_history()
+
+    def _restore_history(self) -> None:
+        load_reports = getattr(self.broker, "get_publisher_reports", None)
+        if load_reports is None:
+            return
+
+        for item in load_reports(self.source):
+            report = item["payload"]
+            entry = SentReport(
+                report=report,
+                topic=item["category"],
+                sent_at=str(report.get("timestamp") or item["created_at"]),
+            )
+            for delivery in item["deliveries"]:
+                name = delivery["display_name"] or delivery["subscriber_id"]
+                if delivery["status"] == "DELIVERED_ACKED":
+                    state = ACKED
+                elif delivery["status"] == "DEAD_LETTER" or not delivery["is_online"]:
+                    state = QUEUED
+                else:
+                    state = SENT
+                entry.receipts[name] = state
+            for name in self._team_names():
+                entry.receipts.setdefault(name, NOT_ROUTED)
+            self.history.append(entry)
+            self._by_id[entry.report_id] = entry
 
     # Form validation (field -> message); empty dict means OK
     @staticmethod

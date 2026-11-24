@@ -67,6 +67,12 @@ class Broker:
     def poll(self, subscriber_id: str) -> list[dict]:
         return self.storage.get_pending_deliveries(subscriber_id)
 
+    def get_subscriber_reports(self, subscriber_id: str) -> list[dict]:
+        return self.storage.get_subscriber_reports(subscriber_id)
+
+    def get_publisher_reports(self, source: str) -> list[dict]:
+        return self.storage.get_publisher_reports(source)
+
     def _deliver_pending(self, subscriber_id: str):
         with self._lock:
             sub = self.subscribers.get(subscriber_id)

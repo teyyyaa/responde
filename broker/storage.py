@@ -158,6 +158,31 @@ class StorageManager:
                 for r in rows
             ]
 
+    def get_subscriber_reports(self, subscriber_id: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT r.report_uid, r.category, r.payload_json,
+                       rs.status AS response_status
+                FROM delivery_queue dq
+                JOIN reports r ON r.id = dq.report_id
+                LEFT JOIN response_status rs
+                  ON rs.report_id = r.id AND rs.subscriber_id = dq.subscriber_id
+                WHERE dq.subscriber_id = ?
+                ORDER BY dq.queue_id ASC;
+                """,
+                (subscriber_id,),
+            ).fetchall()
+            return [
+                {
+                    "report_uid": row["report_uid"],
+                    "category": row["category"],
+                    "payload": json.loads(row["payload_json"]),
+                    "response_status": row["response_status"],
+                }
+                for row in rows
+            ]
+
     def ack_delivery(self, queue_id: int) -> None:
         with self._connect() as conn:
             conn.execute(
@@ -232,17 +257,67 @@ class StorageManager:
             ).fetchone()
             if row is None:
                 return False
+            delivery = conn.execute(
+                """
+                SELECT 1 FROM delivery_queue
+                WHERE report_id = ? AND subscriber_id = ?;
+                """,
+                (int(row["id"]), subscriber_id),
+            ).fetchone()
+            if delivery is None:
+                return False
             conn.execute(
                 """
                 INSERT INTO response_status (subscriber_id, report_id, status)
-                VALUES (?, ?, ?)
+                SELECT subscriber_id, ?, ?
+                FROM delivery_queue
+                WHERE report_id = ?
                 ON CONFLICT(subscriber_id, report_id) DO UPDATE SET
                     status = excluded.status,
                     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now');
                 """,
-                (subscriber_id, int(row["id"]), status),
+                (int(row["id"]), status, int(row["id"])),
             )
             return True
+
+    def get_publisher_reports(self, source: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT r.report_uid, r.category, r.payload_json, r.created_at,
+                       dq.subscriber_id, dq.status AS delivery_status,
+                       s.display_name, s.is_online
+                FROM reports r
+                LEFT JOIN delivery_queue dq ON dq.report_id = r.id
+                LEFT JOIN subscribers s ON s.subscriber_id = dq.subscriber_id
+                ORDER BY r.id ASC, dq.queue_id ASC;
+                """
+            ).fetchall()
+            reports: dict[str, dict[str, Any]] = {}
+            for row in rows:
+                payload = json.loads(row["payload_json"])
+                if payload.get("source") != source:
+                    continue
+                report = reports.setdefault(
+                    row["report_uid"],
+                    {
+                        "report_uid": row["report_uid"],
+                        "category": row["category"],
+                        "payload": payload,
+                        "created_at": row["created_at"],
+                        "deliveries": [],
+                    },
+                )
+                if row["subscriber_id"]:
+                    report["deliveries"].append(
+                        {
+                            "subscriber_id": row["subscriber_id"],
+                            "display_name": row["display_name"],
+                            "status": row["delivery_status"],
+                            "is_online": bool(row["is_online"]),
+                        }
+                    )
+            return list(reports.values())
 
     def get_reports(self) -> list[dict[str, Any]]:
         with self._connect() as conn:

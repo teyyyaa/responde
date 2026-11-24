@@ -611,6 +611,17 @@ class ResponderDashboard:
 
     # Polling loop (Tk main thread)
     def _poll(self):
+        changed = self.sub.refresh_reports()
+        for report in changed:
+            card = self.cards.get(report.report_id)
+            if card is not None:
+                card.refresh_status()
+        if changed:
+            self._refresh_stats()
+            self._repack_feed()
+            if self.selected_id in {report.report_id for report in changed}:
+                self._show_details()
+
         events = self.sub.drain_new_events()
         if events:
             self.log.configure(state="normal")

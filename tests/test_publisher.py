@@ -1,8 +1,11 @@
 """Tests for clients/publisher.py. Run: python -m unittest tests.test_publisher -v"""
 
+import tempfile
 import time
 import unittest
+from pathlib import Path
 
+from broker.broker import Broker
 from clients.mock_broker import MockBroker
 from clients.publisher import (
     ACKED,
@@ -119,6 +122,49 @@ class PublisherTests(unittest.TestCase):
         self.assertFalse(e.error)
         self.assertTrue(wait_for(lambda: e.report_id in fire.reports))
         self.assertEqual(fire.reports[e.report_id].source, SOURCE_BARANGAY)
+
+    def test_sent_history_is_restored_for_its_source(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            db_path = str(Path(directory) / "publisher-history.db")
+            broker = Broker(db_path=db_path, delivery_delay=0.01)
+            fire = Subscriber("fire_station", "Fire Station", ["emergency/fire"], broker)
+            fire.connect()
+
+            operator = Publisher(SOURCE_OPERATOR, broker)
+            barangay = Publisher(SOURCE_BARANGAY, broker)
+            operator_report = operator.send("FIRE", "Jaro", "HIGH")
+            barangay_report = barangay.send("FIRE", "Molo", "MEDIUM")
+
+            def both_acked():
+                operator.refresh_receipts()
+                barangay.refresh_receipts()
+                return (
+                    operator_report.receipts.get("Fire Station") == ACKED
+                    and barangay_report.receipts.get("Fire Station") == ACKED
+                )
+
+            self.assertTrue(wait_for(both_acked))
+
+            restarted_broker = Broker(db_path=db_path, delivery_delay=0.01)
+            restarted_fire = Subscriber(
+                "fire_station", "Fire Station", ["emergency/fire"], restarted_broker
+            )
+            restarted_fire.connect()
+            restored_operator = Publisher(SOURCE_OPERATOR, restarted_broker)
+            restored_barangay = Publisher(SOURCE_BARANGAY, restarted_broker)
+
+            self.assertEqual(
+                [entry.report_id for entry in restored_operator.history],
+                [operator_report.report_id],
+            )
+            self.assertEqual(
+                [entry.report_id for entry in restored_barangay.history],
+                [barangay_report.report_id],
+            )
+            self.assertEqual(
+                restored_operator.get(operator_report.report_id).receipts["Fire Station"],
+                ACKED,
+            )
 
     def test_resend_is_not_shown_twice(self):
         e = self.op.send("FIRE", "Mandurriao", "LOW")

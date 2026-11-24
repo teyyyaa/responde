@@ -98,9 +98,39 @@ class Subscriber:
             )
             self._registered = True
             self._log("REGISTERED", "", f"topics: {', '.join(self.topics)}")
+        self._restore_reports()
         self.connected = True
         self._log("CONNECTED", "", "online - waiting for reports")
         self.broker.set_online(self.subscriber_id, True)
+
+    def _restore_reports(self) -> None:
+        self.refresh_reports()
+
+    def refresh_reports(self) -> list[ReceivedReport]:
+        load_reports = getattr(self.broker, "get_subscriber_reports", None)
+        if load_reports is None:
+            return []
+
+        changed = []
+        for item in load_reports(self.subscriber_id):
+            report_id = str(item["report_uid"])
+            status = item["response_status"] or STATUS_NEW
+            if status not in STATUS_ORDER:
+                raise ValueError(f"Invalid persisted response status: {status}")
+            report = self.reports.get(report_id)
+            if report is None:
+                report = ReceivedReport.from_message(item["category"], item["payload"])
+                self.reports[report_id] = report
+                self.new_reports.put(report)
+                event_time = report.received_at
+            elif report.status != status:
+                changed.append(report)
+                event_time = now_str()
+            else:
+                continue
+            report.status = status
+            report.status_history.append((event_time, status))
+        return changed
 
     def disconnect(self) -> None:
         self.connected = False

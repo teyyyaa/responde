@@ -67,6 +67,13 @@ In a responder dashboard:
 
 Status updates are persisted with the report and subscriber.
 
+Responder dashboards reload their assigned reports and saved response statuses
+from the database when they start. Status changes are shared across responder
+dashboards, including the Command Center.
+
+The 911 Operator and Barangay Hotline dashboards reload their own sent-report
+history and saved delivery receipts from the database when they start.
+
 ## Run the HTTP API
 
 ```powershell

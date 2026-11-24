@@ -122,6 +122,8 @@ class PublisherDashboard:
         self._build_header()
         self._build_body()
         self._bind_keys()
+        for entry in self.pub.history:
+            self._add_card(entry)
         self._refresh_stats()
         self._poll()
 
