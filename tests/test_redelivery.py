@@ -81,6 +81,51 @@ class RedeliveryTests(unittest.TestCase):
             persisted = broker2.storage.get_reports()
             self.assertTrue(any(row["report_uid"] == report["report_id"] for row in persisted))
 
+    def test_repeated_reconnect_delivers_queued_report_once(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            broker = Broker(
+                db_path=str(Path(directory) / "once.db"),
+                delivery_delay=0.01,
+            )
+            delivered = []
+
+            def callback(topic, report):
+                delivered.append(report["report_id"])
+                return True
+
+            broker.register_subscriber(
+                "sub",
+                "Subscriber",
+                ["*"],
+                callback,
+            )
+            broker.set_online("sub", False)
+
+            report = make_report("MEDICAL", "Molo", "CRITICAL")
+            broker.publish("emergency/medical", report)
+            broker.set_online("sub", True)
+            broker.set_online("sub", True)
+            time.sleep(0.05)
+
+            self.assertEqual(delivered.count(report["report_id"]), 1)
+
+    def test_offline_poll_does_not_surface_queued_report(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            broker = Broker(
+                db_path=str(Path(directory) / "offline-poll.db"),
+                delivery_delay=0.01,
+            )
+            ambul = Subscriber("amb", "Ambulance", ["emergency/medical"], broker)
+            ambul.connect()
+            ambul.disconnect()
+
+            report = make_report("MEDICAL", "Molo", "CRITICAL")
+            broker.publish("emergency/medical", report)
+            time.sleep(0.05)
+
+            self.assertEqual(ambul.refresh_reports(), [])
+            self.assertNotIn(report["report_id"], ambul.reports)
+
 
 if __name__ == "__main__":
     unittest.main()

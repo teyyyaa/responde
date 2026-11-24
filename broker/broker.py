@@ -16,6 +16,7 @@ class Broker:
         self.log: list[tuple] = []
         self.statuses: dict[tuple[str, str], str] = {}
         self._lock = threading.Lock()
+        self._in_flight: set[tuple[str, str]] = set()
 
     def register_subscriber(self, subscriber_id: str, name: str, topics: list[str], callback: Callable):
         with self._lock:
@@ -83,18 +84,35 @@ class Broker:
             self._deliver_later(subscriber_id, item["category"], report)
 
     def _deliver_later(self, subscriber_id: str, topic: str, report: dict):
+        key = (subscriber_id, str(report["report_id"]))
+        with self._lock:
+            if key in self._in_flight:
+                return
+            self._in_flight.add(key)
         timer = threading.Timer(self.delivery_delay, self._deliver,
                                 (subscriber_id, topic, report))
         timer.daemon = True
         timer.start()
 
     def _deliver(self, subscriber_id: str, topic: str, report: dict):
+        key = (subscriber_id, str(report["report_id"]))
         with self._lock:
             sub = self.subscribers.get(subscriber_id)
             if sub is None or not sub["online"]:
+                self._in_flight.discard(key)
                 return
             callback = sub["callback"]
-        callback(topic, report)
+        try:
+            result = callback(topic, report)
+            if result is False:
+                self.nack(subscriber_id, str(report["report_id"]), "Subscriber rejected delivery")
+            else:
+                self.ack(subscriber_id, str(report["report_id"]))
+        except Exception as exc:
+            self.nack(subscriber_id, str(report["report_id"]), str(exc))
+        finally:
+            with self._lock:
+                self._in_flight.discard(key)
 
     def ack(self, subscriber_id: str, report_id: str):
         found = self.storage.ack_by_report(subscriber_id, str(report_id))

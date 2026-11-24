@@ -98,8 +98,8 @@ class Subscriber:
             )
             self._registered = True
             self._log("REGISTERED", "", f"topics: {', '.join(self.topics)}")
-        self._restore_reports()
         self.connected = True
+        self._restore_reports()
         self._log("CONNECTED", "", "online - waiting for reports")
         self.broker.set_online(self.subscriber_id, True)
 
@@ -107,6 +107,9 @@ class Subscriber:
         self.refresh_reports()
 
     def refresh_reports(self) -> list[ReceivedReport]:
+        if not self.connected:
+            return []
+
         load_reports = getattr(self.broker, "get_subscriber_reports", None)
         if load_reports is None:
             return []
