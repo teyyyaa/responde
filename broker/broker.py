@@ -18,12 +18,15 @@ class Broker:
         self._lock = threading.Lock()
         self._in_flight: set[tuple[str, str]] = set()
 
-    def register_subscriber(self, subscriber_id: str, name: str, topics: list[str], callback: Callable):
+    def register_subscriber(
+        self, subscriber_id: str, name: str, topics: list[str], callback: Callable | None
+    ):
         with self._lock:
             self.subscribers[subscriber_id] = {
                 "name": name,
                 "topics": list(topics),
                 "callback": callback,
+                "polling": callback is None,
                 "online": False,
             }
         self.storage.register_subscriber(subscriber_id, name, topics, is_online=False)
@@ -43,7 +46,7 @@ class Broker:
             if sub is not None:
                 sub["online"] = online
         self.storage.set_subscriber_status(subscriber_id, online)
-        if online:
+        if online and sub is not None and not sub["polling"]:
             self._deliver_pending(subscriber_id)
 
     def publish(self, topic: str, report: dict):
@@ -60,7 +63,8 @@ class Broker:
         for subscriber_id, sub in targets:
             if sub["online"]:
                 delivered.append(sub["name"])
-                self._deliver_later(subscriber_id, topic, report)
+                if not sub["polling"]:
+                    self._deliver_later(subscriber_id, topic, report)
             else:
                 queued.append(sub["name"])
         return delivered, queued
@@ -77,7 +81,7 @@ class Broker:
     def _deliver_pending(self, subscriber_id: str):
         with self._lock:
             sub = self.subscribers.get(subscriber_id)
-            if sub is None or not sub["online"]:
+            if sub is None or not sub["online"] or sub["polling"]:
                 return
         for item in self.storage.get_pending_deliveries(subscriber_id):
             report = item["payload"]
@@ -98,7 +102,7 @@ class Broker:
         key = (subscriber_id, str(report["report_id"]))
         with self._lock:
             sub = self.subscribers.get(subscriber_id)
-            if sub is None or not sub["online"]:
+            if sub is None or not sub["online"] or sub["callback"] is None:
                 self._in_flight.discard(key)
                 return
             callback = sub["callback"]

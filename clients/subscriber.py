@@ -81,6 +81,8 @@ class Subscriber:
 
         self.connected = False
         self._registered = False
+        self._polling_enabled = False
+        self._poll_error = False
         self._lock = threading.Lock()
 
         self.reports: dict[str, ReceivedReport] = {}
@@ -89,7 +91,6 @@ class Subscriber:
         # The broker may call us from another thread; the UI reads these queues.
         self.new_reports: "queue.Queue[ReceivedReport]" = queue.Queue()
         self.new_events: "queue.Queue[HistoryEvent]" = queue.Queue()
-
     # Connection
     def connect(self) -> None:
         if not self._registered:
@@ -102,6 +103,7 @@ class Subscriber:
         self._restore_reports()
         self._log("CONNECTED", "", "online - waiting for reports")
         self.broker.set_online(self.subscriber_id, True)
+        self._polling_enabled = getattr(self.broker, "polling", False)
 
     def _restore_reports(self) -> None:
         self.refresh_reports()
@@ -114,8 +116,22 @@ class Subscriber:
         if load_reports is None:
             return []
 
+        try:
+            if self._polling_enabled:
+                for item in self.broker.poll(self.subscriber_id):
+                    self._on_message(item["category"], item["payload"])
+            items = load_reports(self.subscriber_id)
+        except Exception as exc:
+            if not self._poll_error:
+                self._log("POLL FAILED", "", str(exc))
+                self._poll_error = True
+            return []
+        if self._poll_error:
+            self._log("POLL RESTORED", "", "connection to broker restored")
+            self._poll_error = False
+
         changed = []
-        for item in load_reports(self.subscriber_id):
+        for item in items:
             report_id = str(item["report_uid"])
             status = item["response_status"] or STATUS_NEW
             if status not in STATUS_ORDER:
@@ -137,6 +153,7 @@ class Subscriber:
 
     def disconnect(self) -> None:
         self.connected = False
+        self._polling_enabled = False
         self.broker.set_online(self.subscriber_id, False)
         self._log("DISCONNECTED", "", "offline - broker will queue reports")
 

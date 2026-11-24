@@ -24,14 +24,20 @@ from ui import (
 )
 
 
-def main():
-    broker = Broker()
+def main(broker=None, roles=None):
+    broker = broker or Broker()
     root = ctk.CTk()
     root.withdraw()
 
-    # Responders first, so they are registered before the first report.
-    modules = (fire_station_dashboard, ambulance_dashboard, command_center_dashboard,
-               operator_dashboard, barangay_dashboard)
+    available = {
+        "fire": fire_station_dashboard,
+        "ambulance": ambulance_dashboard,
+        "command": command_center_dashboard,
+        "operator": operator_dashboard,
+        "barangay": barangay_dashboard,
+    }
+    selected = set(roles or available)
+    modules = [module for role, module in available.items() if role in selected]
     for i, module in enumerate(modules):
         win = ctk.CTkToplevel(root)
         module.open_dashboard(win, broker)

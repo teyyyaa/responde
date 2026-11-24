@@ -113,6 +113,7 @@ class PublisherDashboard:
         self.location_hint = location_hint
         self.cards: dict[str, SentCard] = {}
         self._banner_job = None
+        self._poll_error = False
 
         master.title(f"RESPONDE · {title}")
         master.geometry("1200x760")
@@ -355,7 +356,17 @@ class PublisherDashboard:
 
     # Poll the broker for new ACKs
     def _poll(self):
-        changed = self.pub.refresh_receipts()
+        try:
+            changed = self.pub.refresh_receipts()
+        except Exception as exc:
+            if not self._poll_error:
+                self._show_banner(f"Broker connection lost: {exc}", error=True)
+                self._poll_error = True
+            self.master.after(POLL_MS, self._poll)
+            return
+        if self._poll_error:
+            self._show_banner("Broker connection restored.")
+            self._poll_error = False
         for entry in changed:
             card = self.cards.get(entry.report_id)
             if card:
