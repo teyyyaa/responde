@@ -7,12 +7,13 @@ redelivery, and response status updates.
 ## Requirements
 
 - Python 3.10 or newer
-- CustomTkinter
 
-Install CustomTkinter from the project directory:
+## Installation
+
+Install the required dependencies:
 
 ```powershell
-py -m pip install customtkinter
+py -m pip install -r requirements.txt
 ```
 
 ## Run the complete application
